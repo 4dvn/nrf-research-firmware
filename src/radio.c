@@ -251,20 +251,20 @@ void handle_radio_request(uint8_t request, uint8_t * data)
 
     // Check if a payload is available
     read_register(FIFO_STATUS, &value, 1);
-    if((value & 1) == 0)
+    if((value & 1) == 0) //data in RX FIFO
     {
       // ESB sniffer mode
       if(radio_mode == sniffer)
       {
         // Get the payload width
-        read_register(R_RX_PL_WID, &value, 1);
+        read_register(R_RX_PL_WID, &value, 1); //read payload width for top of R_RX_PAYLOAD FIFO, if >32 flush_rx
         if(value <= 32)
         {
           // Read the payload and write it to EP1
           read_register(R_RX_PAYLOAD, &in1buf[1], value);
           in1buf[0] = 0;
           in1bc = value + 1;
-          flush_rx();
+          //flush_rx(); //this would flush the RX FIFO, even if there's remaining data to read
           return;
         }
         else

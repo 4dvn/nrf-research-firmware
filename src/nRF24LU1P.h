@@ -179,6 +179,15 @@ enum STATUS
   TX_FULL = 0x01,
 };
 
+enum FIFO_STATUS
+{
+  FIFO_RX_EMPTY = 0x01,
+  FIFO_RX_FULL  = 0x02,
+  FIFO_TX_EMPTY = 0x10,
+  FIFO_TX_FULL  = 0x20,
+  FIFO_TX_REUSE = 0x40,
+};
+
 // nRF24 SPI commands
 enum nrf24_command
 {
