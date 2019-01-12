@@ -371,18 +371,25 @@ void handle_radio_request(uint8_t request, uint8_t * data)
   {
     radio_mode = sniffer;
 
+    // data[0] == 0x00 disable auto ack
+    // data[0] == 0x01 enable auto ack
+
     // Clamp to 2-5 byte addresses
-    if(data[0] > 5) data[0] = 5;
-    if(data[0] < 2) data[0] = 2;
+    if(data[1] > 5) data[1] = 5;
+    if(data[1] < 2) data[1] = 2;
 
     // CE low
     rfce = 0;
 
     // Configure the address
-    configure_address(&data[1], data[0]);
+    configure_address(&data[2], data[1]);
 
     // Enable dynamic payload length, disable automatic ACK handling
     configure_mac(EN_DPL | EN_ACK_PAY, DPL_P0, ENAA_NONE);
+
+    if (data[0] > 0) {
+    	write_register_byte(EN_AA, ENAA_P0);
+    }
 
     // 2Mbps data rate, enable RX, 16-bit CRC
     configure_phy(EN_CRC | CRC0 | PRIM_RX | PWR_UP, RATE_2M, 0);
@@ -420,7 +427,7 @@ void handle_radio_request(uint8_t request, uint8_t * data)
     write_register_byte(EN_AA, ENAA_P0);
     write_register_byte(FEATURE, EN_DPL | EN_ACK_PAY);
 
-    // Write the AC Kpayload
+    // Write the ACK payload
     spi_write(W_ACK_PAYLOAD, &data[1], data[0]);
 
     // CE high
