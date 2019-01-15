@@ -384,11 +384,13 @@ void handle_radio_request(uint8_t request, uint8_t * data)
     // Configure the address
     configure_address(&data[2], data[1]);
 
-    // Enable dynamic payload length, disable automatic ACK handling
-    configure_mac(EN_DPL | EN_ACK_PAY, DPL_P0, ENAA_NONE);
 
     if (data[0] > 0) {
-    	write_register_byte(EN_AA, ENAA_P0);
+    	configure_mac(EN_DPL | EN_ACK_PAY, DPL_P0, ENAA_P0);
+    	radio_mode = sniffer_ack;
+    } else {
+    	// Enable dynamic payload length, disable automatic ACK handling
+	    configure_mac(EN_DPL | EN_ACK_PAY, DPL_P0, ENAA_NONE);
     }
 
     // 2Mbps data rate, enable RX, 16-bit CRC
@@ -456,8 +458,24 @@ void handle_radio_request(uint8_t request, uint8_t * data)
   }
 
   // Transmit an ESB payload
+  /*
+  MaMe82: The method returns 0 for success and 1 for error
+  Success: bit 5 on RFDAT (==STATUS) is set which corresponds to TX_DS
+  Error: bit 4 is set, which corresponds to MAX_RT is reached
+
+  If we have enabled auto ACk, we want to check for received ACK payloads and return them if present (RX_DR set).
+  In order to do this, we change the return values, while saying compatible to the legacy implementation.
+
+  0 = error
+  values > 0 represent ack payload length + 1 (empty ack would be 1, one byte ack payload 2 and so on)
+  The payload itself is appended to the usb buffer before returning
+  */
   else if(request == TRANSMIT_PAYLOAD)
   {
+      uint8_t value; // use to read len of payload ACK
+      uint8_t status;
+
+
     // Clamp to 1-32 byte payload
     if(data[0] > 32) data[0] = 32;
     if(data[0] < 1) data[0] = 1;
@@ -471,7 +489,7 @@ void handle_radio_request(uint8_t request, uint8_t * data)
 
     // Flush the TX/RX buffers
     flush_tx();
-    flush_rx();
+    flush_rx(); // sure, we're only interested in RX payloads received with ACKs (not old ones from sniffer mode)
 
     // Clear the max retries and data sent flags
     write_register_byte(STATUS, MAX_RT | TX_DS | RX_DR);
@@ -482,6 +500,7 @@ void handle_radio_request(uint8_t request, uint8_t * data)
     // Enable auto ACK handling
     write_register_byte(EN_AA, ENAA_P0);
 
+
     // Write the payload
     spi_write(W_TX_PAYLOAD, &data[3], data[0]);
 
@@ -491,39 +510,78 @@ void handle_radio_request(uint8_t request, uint8_t * data)
     rfce = 0;
 
     // Wait for success, failure, or timeout
-    while(true)
-    {
-      // Read the STATUS register
-      rfcsn = 0;
-      RFDAT = _NOP;
-      RFRDY = 0;
-      while(!RFRDY);
-      rfcsn = 1;
+	while(true)
+	{
+	/*
+		rfcsn = 0;
+		RFDAT = _NOP;
+		RFRDY = 0;
+      	while(!RFRDY);
+		rfcsn = 1;
+	*/
+		// Read the STATUS register
+		status = read_register_byte(STATUS);
 
-      // Max retransmits reached
-      if((RFDAT & 0x10) == 0x10)
-      {
-        in1buf[0] = 0;
-        break;
-      }
+		// Max retransmits reached
+		if((status & MAX_RT) > 0) {
+			in1buf[0] = 0; //retval error
+			in1bc = 1;
+        	break;
+		}
 
-      // Successful transmit
-      if((RFDAT & 0x20) == 0x20)
-      {
-        in1buf[0] = 1;
-        break;
-      }
+		// Successful transmit
+		if((status & TX_DS) > 0) { //data send
+			if (radio_mode == sniffer_ack) {
+      			if ((status & RX_DR) == RX_DR) { //ack payload received
+
+					//read_register(R_RX_PL_WID, &value, 1); //readRX payload len
+					rfcsn = 0;
+					read_register(R_RX_PL_WID, &value, 1); //readRX payload len
+					rfcsn = 1;
+
+					if(value <= 32) {
+						read_register(R_RX_PAYLOAD, &in1buf[1], value); //append payload to USB out buf for EP1
+						in1buf[0] = value + 1; //set first byte of out buf to len+1 (in1buf[0] > 0 indicates success)
+						in1bc = value + 1;
+						//flush_rx(); //this would flush the RX FIFO, even if there's remaining data to read
+					} else {
+						// Invalid payload width
+						in1bc = 1;
+						in1buf[0] = 1; //We have no valid payload to report, but anyways succeeded in sending, thus we return a value > 0
+						flush_rx(); //... and flush RX as defined in sepcs for R_RX_PL_WID > 32
+					}
+				} else {
+					// no ack payload received, return success and payload length 0 (incremented by 1)
+					in1bc = 1;
+					in1buf[0] = 1;
+				}
+				break;
+      		} else {
+      			// we aren't sniffing ACK payloads, but received an ACK, so we return success (with empty payload) as TX_DS is set
+    			in1bc = 1;
+    			in1buf[0] = 1;
+        		break;
+	      	}
+		}
     }
 
-    // Disable auto ack
-    write_register_byte(EN_AA, ENAA_NONE);
+    // Disable auto ack if not sniffing with AA
+    if (radio_mode != sniffer_ack) {
+    	write_register_byte(EN_AA, ENAA_NONE);
+    }
+    /*
+    //don't disable AA
+    else {
+    	write_register_byte(EN_AA, ENAA_P0);
+    }
+    */
 
     // Enable RX
     write_register_byte(CONFIG, read_register_byte(CONFIG) | PRIM_RX);
 
     // CE high
     rfce = 1;
-    in1bc = 1;
+
   }
 
   // Transmit a generic payload

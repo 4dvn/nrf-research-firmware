@@ -108,6 +108,10 @@ enum radio_mode_t
 
   // Generic promiscuous mode
   promiscuous_generic = 2,
+
+  // None passive sniffin with auto ack enabled (standard RX)
+  sniffer_ack = 3,
+
 };
 
 // Radio mode
